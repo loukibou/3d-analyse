@@ -1,28 +1,30 @@
-# 1) On part d'une image Python légère
-FROM python:3.12-slim
+# Utilise une image Miniconda officielle
+FROM continuumio/miniconda3:latest
 
-# 2) On installe les paquets système nécessaires (libGL)
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      libgl1-mesa-glx \
-      libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+# 1) Crée un environnement conda python3.10 (CadQuery 2.1 supporté)
+RUN conda create -y -n cadenv python=3.10 \
+    && conda clean -afy
 
-# 3) On déclare le répertoire de travail
+# 2) Active l'env, installe CadQuery et PythonOCC en même temps
+SHELL ["conda", "run", "-n", "cadenv", "/bin/bash", "-c"]
+RUN conda install -y -c conda-forge \
+    cadquery=2.1 \
+    pythonocc-core \
+    flask \
+    requests \
+    boto3 \
+    && conda clean -afy
+
+# 3) Retour au shell normal pour COPY et CMD
+SHELL ["/bin/bash", "-lc"]
+
+# 4) Copie votre code dans /app
 WORKDIR /app
-
-# 4) On copie d'abord les dépendances
-COPY requirements.txt .
-
-# 5) Puis on installe les dépendances Python
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 6) On copie le reste de votre code
 COPY . .
 
-# 7) Exposition du port dynamique (Railway injecte $PORT)
+# 5) Expose le port (Railway injecte $PORT)
 ENV PORT=8000
 EXPOSE 8000
 
-# 8) Commande de démarrage
-CMD ["python", "app.py"]
+# 6) Utilise l'environnement conda au runtime
+CMD ["conda", "run", "--no-capture-output", "-n", "cadenv", "python", "app.py"]
