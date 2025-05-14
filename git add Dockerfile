@@ -1,0 +1,2 @@
+git commit -m "Add Dockerfile to include libGL and run app"
+git push origin main
