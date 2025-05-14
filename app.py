@@ -15,8 +15,8 @@ s3 = boto3.client(
     "s3",
     endpoint_url=S3_ENDPOINT,
     region_name=S3_REGION,
-    aws_access_key_id=os.getenv("3O7GR4M8QUZV2U9FJJU0"),
-    aws_secret_access_key=os.getenv("pmKdUz0K7u2iLFJnPi6Fz5e5jGiUnVcSap0mR6hf")
+    aws_access_key_id=os.getenv("WASABI_KEY"),
+    aws_secret_access_key=os.getenv("WASABI_SECRET")
 )
 
 app = Flask(__name__)
