@@ -1,34 +1,24 @@
-# 1) Base Conda (Debian)
-FROM continuumio/miniconda3:latest
+# 1) On part d'une image Ubuntu récente
+FROM ubuntu:22.04
 
-# 2) Installer libGL pour CadQuery/OpenCASCADE
+# 2) Installer FreeCAD headless + Python3 + pip + dépendances système
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        libgl1-mesa-glx \
-        libglib2.0-0 && \
-    rm -rf /var/lib/apt/lists/*
+    DEBIAN_FRONTEND=noninteractive apt-get install -y \
+      python3-freecad \
+      freecad \
+      python3-pip \
+      && rm -rf /var/lib/apt/lists/*
 
-# 3) Configurer conda-forge et installer Mamba
-RUN conda config --add channels conda-forge && \
-    conda config --set channel_priority strict && \
-    conda install -y mamba && \
-    conda clean -afy
+# 3) Installer Flask, requests et boto3
+RUN pip3 install --no-cache-dir flask requests boto3
 
-# 4) Installer Python 3.10, CadQuery, OCC, Flask, Requests, Boto3
-RUN mamba install -y \
-        python=3.10 \
-        cadquery \
-        pythonocc-core \
-        flask \
-        requests \
-        boto3 && \
-    mamba clean --all --yes
-
-# 5) Copier le code de l'application
+# 4) Copier l'app
 WORKDIR /app
-COPY . .
+COPY app.py .
 
-# 6) Exposer le port injecté par Railway et démarrer l'app
+# 5) Exposer le port injecté par Railway
 ENV PORT=8000
 EXPOSE 8000
-CMD ["python", "app.py"]
+
+# 6) Démarrer le service
+CMD ["python3", "app.py"]
