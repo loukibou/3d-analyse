@@ -2,7 +2,8 @@
 from flask import Flask, request, jsonify
 import tempfile, os, requests, boto3, traceback
 from urllib.parse import urlparse, unquote
-# pythonOCC imports using OCC.Core namespace
+
+# pythonOCC imports utilisant le namespace OCC.Core
 from OCC.Core.TDocStd import TDocStd_Document
 from OCC.Core.XCAFApp import XCAFApp_Application
 from OCC.Core.XCAFDoc import XCAFDoc_DocumentTool
@@ -18,7 +19,7 @@ S3_REGION     = "ca-central-1"
 S3_BUCKET     = "bardou-prod"
 S3_KEY_PREFIX = "cleaned/"
 
-# Initialisation client S3
+# Initialisation du client S3
 s3 = boto3.client(
     "s3",
     endpoint_url=S3_ENDPOINT,
@@ -29,7 +30,8 @@ s3 = boto3.client(
 
 def parse_step_caf(path):
     """Lit un STEP avec labels et extrait nom, volume, surface, matériau."""
-    app_xde = XCAFApp_Application.GetApplication().GetObject()
+    # On retire .GetObject() — GetApplication() renvoie déjà l’instance
+    app_xde = XCAFApp_Application.GetApplication()
     doc     = TDocStd_Document()
     app_xde.NewDocument("MDTV-Standard", doc)
     tool = XCAFDoc_DocumentTool(doc.Main())
@@ -54,10 +56,9 @@ def parse_step_caf(path):
         brepgprop_SurfaceProperties(shape, sp)
         surf = sp.Mass()
 
-        # Matériau si présent
+        # Matériau (par défaut inconnu)
         materiau = "Inconnu"
-        # (vérifier si GetMaterial existe et retourne un nom)
-        if hasattr(tool, 'GetMaterial'):
+        if hasattr(tool, "GetMaterial"):
             try:
                 materiau = tool.GetMaterial(lbl)
             except:
@@ -83,28 +84,27 @@ def analyze():
         resp = requests.get(url)
         resp.raise_for_status()
 
-        # 2) Déterminer proprement l'extension sans query-string
+        # 2) Extraire l’extension proprement (sans query string)
         parsed = urlparse(url)
-        path   = unquote(parsed.path)                     # "/monfichier.step"
+        path   = unquote(parsed.path)
         ext    = os.path.splitext(path)[1].lower() or ".step"
-        # s'il n'y a pas d'extension valide, on force ".step"
         if ext not in {".step", ".stp", ".stp2", ".stepz"}:
             ext = ".step"
 
-        # 3) Créer fichier temporaire avec extension propre
+        # 3) Sauvegarder en fichier temporaire
         tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
         tmp.write(resp.content)
         tmp.flush()
 
-        # 4) Extraction pièces
+        # 4) Parser et extraire les pièces
         pieces = parse_step_caf(tmp.name)
         nombre_de_pieces = len(pieces)
 
-        # 5) Totaux
+        # 5) Calcul des totaux
         volume_total  = sum(p["volume"]  for p in pieces)
         surface_total = sum(p["surface"] for p in pieces)
 
-        # 6) Répartition matériaux
+        # 6) Répartition par matériau
         repart = {}
         for p in pieces:
             mat = p["materiau"]
@@ -121,7 +121,7 @@ def analyze():
                 "pourc_surface": 100 * vals["surface"] / (surface_total or 1)
             })
 
-        # 7) Upload STEP anonymisé (copie brute)
+        # 7) Copier & uploader l’original anonymisé
         tmp_out = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
         with open(tmp.name, "rb") as src, open(tmp_out.name, "wb") as dst:
             dst.write(src.read())
@@ -129,7 +129,7 @@ def analyze():
         s3.upload_file(tmp_out.name, S3_BUCKET, key, ExtraArgs={"ACL": "public-read"})
         url_nettoye = f"{S3_ENDPOINT}/{S3_BUCKET}/{key}"
 
-        # 8) Réponse JSON
+        # 8) Retour JSON
         return jsonify({
             "nombre_de_pieces":      nombre_de_pieces,
             "volume_total":          volume_total,
@@ -148,3 +148,4 @@ def analyze():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
+
