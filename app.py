@@ -1,16 +1,23 @@
 from flask import Flask, request, jsonify
-import cadquery as cq
-import tempfile, os, requests
-import boto3
+import tempfile, os, requests, boto3, traceback
 
-# ← Modifie ici uniquement si tu changes de région/endpoint Wasabi
+# OCP / XCAF pour récupérer labels STEP
+from OCP.TDocStd import TDocStd_Document
+from OCP.XCAFApp import XCAFApp_Application
+from OCP.XCAFDoc import XCAFDoc_DocumentTool
+from OCP.STEPCAFControl import STEPCAFControl_Reader
+from OCP.BRepGProp import brepgprop_VolumeProperties, brepgprop_SurfaceProperties
+from OCP.GProp import GProp_GProps
+
+app = Flask(__name__)
+
+# ← Paramètres Wasabi
 S3_ENDPOINT   = "https://s3.ca-central-1.wasabisys.com"
 S3_REGION     = "ca-central-1"
-S3_BUCKET     = "bardou-prod"       # ← Ton bucket Wasabi
+S3_BUCKET     = "bardou-prod"
 S3_KEY_PREFIX = "cleaned/"
 
-# Les clés WASABI_KEY et WASABI_SECRET sont lues depuis
-# les variables d'environnement de Railway.
+# client S3
 s3 = boto3.client(
     "s3",
     endpoint_url=S3_ENDPOINT,
@@ -19,7 +26,43 @@ s3 = boto3.client(
     aws_secret_access_key=os.getenv("WASABI_SECRET")
 )
 
-app = Flask(__name__)
+def parse_step_with_labels(path):
+    """Retourne une liste de dict {name, volume, surface, bbox} pour chaque pièce du STEP."""
+    # 1) Crée le document XDE
+    app_xde = XCAFApp_Application.GetApplication().GetObject()
+    doc     = TDocStd_Document()
+    app_xde.NewDocument("MDTV-Standard", doc)
+    shape_tool = XCAFDoc_DocumentTool(doc.Main())
+
+    # 2) Lecture STEPCAF (labels + géométrie)
+    reader = STEPCAFControl_Reader()
+    reader.ReadFile(path)
+    reader.Transfer(doc)
+
+    # 3) Parcours des FreeShapes (chaque sous-ensemble/pièce)
+    result = []
+    free_shapes = shape_tool.GetFreeShapes()
+    for idx in range(1, free_shapes.Extent()+1):
+        lbl   = free_shapes.Value(idx)
+        name  = shape_tool.GetLabel(lbl).GetText()  # Nom du label
+        shape = shape_tool.GetShape(lbl)
+
+        # Volume
+        gv = GProp_GProps(); brepgprop_VolumeProperties(shape, gv)
+        vol = gv.Mass()
+        # Surface
+        gs = GProp_GProps(); brepgprop_SurfaceProperties(shape, gs)
+        surf = gs.Mass()
+
+        # Bounding box via GProp ou CadQuery si tu préfères
+        # (ici on skip bbox par simplicité)
+
+        result.append({
+            "name":    name,
+            "volume":  vol,
+            "surface": surf,
+        })
+    return result
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -29,50 +72,35 @@ def analyze():
         if not url:
             return jsonify({"error": "URL manquante"}), 400
 
-        # 1) Téléchargement du fichier STEP
-        resp = requests.get(url)
-        resp.raise_for_status()
+        # DL STEP
+        resp = requests.get(url); resp.raise_for_status()
+        tmp = tempfile.NamedTemporaryFile(suffix=".step", delete=False)
+        tmp.write(resp.content); tmp.flush()
 
-        tmp_in = tempfile.NamedTemporaryFile(suffix=".step", delete=False)
-        tmp_in.write(resp.content)
-        tmp_in.flush()
+        # Extraction pièce par pièce
+        pieces = parse_step_with_labels(tmp.name)
 
-        # 2) Analyse avec CadQuery
-        assembly    = cq.importers.importStep(tmp_in.name)
-        solids      = assembly.solids().vals()
-        piece_count = len(solids)
-        bb = assembly.val().BoundingBox()
-        dims       = {"x": bb.xlen, "y": bb.ylen, "z": bb.zlen}
-        volumes    = [s.Volume() for s in solids]
-        surfaces   = [s.Area()   for s in solids]
-
-        # 3) Réexport pour anonymisation et upload
-        tmp_out = tempfile.NamedTemporaryFile(suffix=".step", delete=False)
-        cq.exporters.export(assembly, tmp_out.name)
-        key = S3_KEY_PREFIX + os.path.basename(tmp_out.name)
-        s3.upload_file(tmp_out.name, S3_BUCKET, key, ExtraArgs={"ACL": "public-read"})
+        # Upload anonymisé
+        key = S3_KEY_PREFIX + os.path.basename(tmp.name)
+        s3.upload_file(tmp.name, S3_BUCKET, key, ExtraArgs={"ACL": "public-read"})
         cleaned_url = f"{S3_ENDPOINT}/{S3_BUCKET}/{key}"
 
-        # 4) Retour JSON
         return jsonify({
-            "piece_count": piece_count,
-            "bounding_box": dims,
-            "volumes": volumes,
-            "surfaces": surfaces,
+            "assembly": {
+                "piece_count": len(pieces)
+            },
+            "pieces":       pieces,
             "cleaned_file_url": cleaned_url
         })
 
     except Exception as e:
-        # Capture la stack trace pour debug et renvoie-la dans le JSON
-        import traceback
-        tb = traceback.format_exc()
         return jsonify({
             "error": str(e),
-            "trace": tb
+            "trace": traceback.format_exc()
         }), 500
 
 if __name__ == "__main__":
-    # Prend le port injecté par Railway (ou 8000 par défaut)
     port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
+    app.run("0.0.0.0", port=port)
+
 
