@@ -1,7 +1,7 @@
 # app.py - Service d'analyse STEP
 from flask import Flask, request, jsonify
 import tempfile, os, requests, boto3, traceback
-
+from urllib.parse import urlparse, unquote
 # pythonOCC imports using OCC.Core namespace
 from OCC.Core.TDocStd import TDocStd_Document
 from OCC.Core.XCAFApp import XCAFApp_Application
@@ -42,7 +42,7 @@ def parse_step_caf(path):
     free = tool.GetFreeShapes()
     for i in range(1, free.Extent() + 1):
         lbl   = free.Value(i)
-        name  = tool.GetLabel(lbl).GetText()
+        name  = tool.GetLabel(lbl).GetText() or f"Pièce_{i}"
         shape = tool.GetShape(lbl)
 
         # Propriétés géométriques
@@ -56,6 +56,7 @@ def parse_step_caf(path):
 
         # Matériau si présent
         materiau = "Inconnu"
+        # (vérifier si GetMaterial existe et retourne un nom)
         if hasattr(tool, 'GetMaterial'):
             try:
                 materiau = tool.GetMaterial(lbl)
@@ -81,20 +82,29 @@ def analyze():
         # 1) Télécharger le STEP
         resp = requests.get(url)
         resp.raise_for_status()
-        ext = os.path.splitext(url)[1] or ".step"
+
+        # 2) Déterminer proprement l'extension sans query-string
+        parsed = urlparse(url)
+        path   = unquote(parsed.path)                     # "/monfichier.step"
+        ext    = os.path.splitext(path)[1].lower() or ".step"
+        # s'il n'y a pas d'extension valide, on force ".step"
+        if ext not in {".step", ".stp", ".stp2", ".stepz"}:
+            ext = ".step"
+
+        # 3) Créer fichier temporaire avec extension propre
         tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
         tmp.write(resp.content)
         tmp.flush()
 
-        # 2) Extraction pièces
+        # 4) Extraction pièces
         pieces = parse_step_caf(tmp.name)
         nombre_de_pieces = len(pieces)
 
-        # 3) Totaux
-        volume_total  = sum(p["volume"] for p in pieces)
+        # 5) Totaux
+        volume_total  = sum(p["volume"]  for p in pieces)
         surface_total = sum(p["surface"] for p in pieces)
 
-        # 4) Répartition matériaux
+        # 6) Répartition matériaux
         repart = {}
         for p in pieces:
             mat = p["materiau"]
@@ -111,7 +121,7 @@ def analyze():
                 "pourc_surface": 100 * vals["surface"] / (surface_total or 1)
             })
 
-        # 5) Upload STEP anonymisé
+        # 7) Upload STEP anonymisé (copie brute)
         tmp_out = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
         with open(tmp.name, "rb") as src, open(tmp_out.name, "wb") as dst:
             dst.write(src.read())
@@ -119,7 +129,7 @@ def analyze():
         s3.upload_file(tmp_out.name, S3_BUCKET, key, ExtraArgs={"ACL": "public-read"})
         url_nettoye = f"{S3_ENDPOINT}/{S3_BUCKET}/{key}"
 
-        # 6) Réponse JSON
+        # 8) Réponse JSON
         return jsonify({
             "nombre_de_pieces":      nombre_de_pieces,
             "volume_total":          volume_total,
