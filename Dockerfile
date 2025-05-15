@@ -1,26 +1,34 @@
-# 1) Image officielle Python (slim, Debian)
-FROM python:3.10-slim
+# 1) Image Miniconda (Debian sous-jacent)
+FROM continuumio/miniconda3
 
-# 2) Installer les bibliothèques système nécessaires (libGL, etc.)
-RUN apt-get update \
- && apt-get install -y --no-install-recommends \
+# 2) Installer les bibliothèques système pour OpenCASCADE
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
       libgl1-mesa-glx \
       libglib2.0-0 \
- && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*
 
-# 3) Créer et se placer dans le dossier app
+# 3) Configurer conda-forge et installer mamba (solveur rapide)
+RUN conda config --add channels conda-forge && \
+    conda config --set channel_priority strict && \
+    conda install -y mamba && \
+    conda clean -afy
+
+# 4) Installer Python 3.10, CadQuery, pythonOCC, Flask, Requests et Boto3
+RUN mamba install -y \
+      python=3.10 \
+      cadquery \
+      pythonocc-core \
+      flask \
+      requests \
+      boto3 \
+    && mamba clean --all --yes
+
+# 5) Copier le code de l’app dans /app
 WORKDIR /app
-
-# 4) Copier uniquement les dépendances et installer avec pip
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# 5) Copier le reste du code
 COPY . .
 
-# 6) Exposer le port (Railway injecte $PORT)
+# 6) Exposer le port injecté par Railway et lancer l’app
 ENV PORT=8000
 EXPOSE 8000
-
-# 7) Lancer l’application
 CMD ["python", "app.py"]
