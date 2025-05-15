@@ -1,81 +1,26 @@
-# app.py – Service d'analyse STEPCAF
 from flask import Flask, request, jsonify
 import tempfile, os, requests, boto3, traceback
-from urllib.parse import urlparse, unquote
 
-# pythonOCC imports
-from OCC.Core.TDocStd import TDocStd_Document
-from OCC.Core.XCAFApp import XCAFApp_Application
-from OCC.Core.XCAFDoc import XCAFDoc_DocumentTool
-from OCC.Core.STEPCAFControl import STEPCAFControl_Reader
-from OCC.Core.BRepGProp import brepgprop_VolumeProperties, brepgprop_SurfaceProperties
-from OCC.Core.GProp import GProp_GProps
+# FreeCAD headless
+import FreeCAD
+import ImportGui  # permet d'importer le STEP en mémoire
 
 app = Flask(__name__)
 
-# Paramètres Wasabi
+# ← Modifiez si besoin
 S3_ENDPOINT   = "https://s3.ca-central-1.wasabisys.com"
 S3_REGION     = "ca-central-1"
 S3_BUCKET     = "bardou-prod"
 S3_KEY_PREFIX = "cleaned/"
 
-# Init client S3
+# Init client Wasabi (S3‑compatible)
 s3 = boto3.client(
     "s3",
     endpoint_url=S3_ENDPOINT,
     region_name=S3_REGION,
     aws_access_key_id=os.getenv("WASABI_KEY"),
-    aws_secret_access_key=os.getenv("WASABI_SECRET")
+    aws_secret_access_key=os.getenv("WASABI_SECRET"),
 )
-
-def parse_step_caf(path):
-    """Lit un STEPCAF, en extrait la liste des pièces (nom, volume, surface, matériau)."""
-    # Récupère l'application XDE
-    app_xde = XCAFApp_Application.GetApplication()
-
-    # Crée le document – __init__ demande un string
-    doc = TDocStd_Document("MDTV-Standard")
-    app_xde.NewDocument("MDTV-Standard", doc)
-
-    tool = XCAFDoc_DocumentTool(doc.Main())
-    reader = STEPCAFControl_Reader()
-    reader.ReadFile(path)
-    reader.Transfer(doc)
-
-    pieces = []
-    free = tool.GetFreeShapes()
-    for i in range(1, free.Extent() + 1):
-        lbl   = free.Value(i)
-        # Récupération du nom de label
-        name  = tool.GetLabel(lbl).GetText() or f"Pièce_{i}"
-        shape = tool.GetShape(lbl)
-
-        # Calcule volume
-        vp = GProp_GProps()
-        brepgprop_VolumeProperties(shape, vp)
-        vol = vp.Mass()
-
-        # Calcule surface
-        sp = GProp_GProps()
-        brepgprop_SurfaceProperties(shape, sp)
-        surf = sp.Mass()
-
-        # Tentative de récupération du matériau
-        materiau = "Inconnu"
-        if hasattr(tool, "GetMaterial"):
-            try:
-                materiau = tool.GetMaterial(lbl)
-            except Exception:
-                pass
-
-        pieces.append({
-            "nom":      name,
-            "materiau": materiau,
-            "volume":   vol,
-            "surface":  surf
-        })
-
-    return pieces
 
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -85,66 +30,86 @@ def analyze():
         if not url:
             return jsonify({"error": "URL manquante"}), 400
 
-        # 1) Télécharge
-        resp = requests.get(url)
+        # 1) Télécharger le STEP
+        resp = requests.get(url, timeout=60)
         resp.raise_for_status()
+        suffix = os.path.splitext(url)[1] or ".step"
+        tmp_in = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        tmp_in.write(resp.content)
+        tmp_in.flush()
 
-        # 2) Extrait proprement l'extension (sans query params)
-        parsed = urlparse(url)
-        path   = unquote(parsed.path)
-        ext    = os.path.splitext(path)[1].lower() or ".step"
-        if ext not in {".step", ".stp", ".stepz"}:
-            ext = ".step"
+        # 2) Créer un document FreeCAD headless et y importer le STEP
+        doc = FreeCAD.newDocument("TmpDoc")
+        ImportGui.insert(tmp_in.name, doc.Name)
 
-        # 3) Écris dans un fichier temporaire
-        tmp = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
-        tmp.write(resp.content)
-        tmp.flush()
+        # 3) Parcourir chaque objet (pièce)
+        pieces = []
+        for obj in doc.Objects:
+            # Nom (objet FreeCAD a un attribut Name ou Label)
+            nom = getattr(obj, "Label", obj.Name)
 
-        # 4) Parse et récupère les pièces
-        pieces = parse_step_caf(tmp.name)
-        nombre_de_pieces = len(pieces)
+            # Forme
+            shp = obj.Shape
 
-        # 5) Totaux
-        volume_total  = sum(p["volume"]  for p in pieces)
-        surface_total = sum(p["surface"] for p in pieces)
+            # Volume & surface
+            vol  = shp.Volume
+            surf = shp.Area
 
-        # 6) Répartition matériaux
+            # Matériau (si défini dans obj.Material ou dans obj.ViewObject)
+            mat = None
+            if hasattr(obj, "Material") and obj.Material:
+                mat = obj.Material
+            else:
+                # fallback : on cherche un champ ViewObject.Material
+                mat = getattr(obj.ViewObject, "Material", None)
+            mat = mat or "Inconnu"
+
+            pieces.append({
+                "nom":      nom,
+                "materiau": mat,
+                "volume":   vol,
+                "surface":  surf
+            })
+
+        # 4) Totaux et répartition matériaux
+        n_pieces    = len(pieces)
+        vol_total   = sum(p["volume"]  for p in pieces)
+        surf_total  = sum(p["surface"] for p in pieces)
+
         repart = {}
         for p in pieces:
-            mat = p["materiau"]
-            repart.setdefault(mat, {"volume": 0.0, "surface": 0.0})
-            repart[mat]["volume"]  += p["volume"]
-            repart[mat]["surface"] += p["surface"]
+            m = p["materiau"]
+            repart.setdefault(m, {"volume": 0.0, "surface": 0.0})
+            repart[m]["volume"]  += p["volume"]
+            repart[m]["surface"] += p["surface"]
 
         repartition = [
             {
-                "nom":           mat,
-                "volume":        vals["volume"],
-                "surface":       vals["surface"],
-                "pourc_volume":  100 * vals["volume"]  / (volume_total  or 1),
-                "pourc_surface": 100 * vals["surface"] / (surface_total or 1),
+                "materiau":       m,
+                "volume":         vals["volume"],
+                "surface":        vals["surface"],
+                "pourc_volume":   100 * vals["volume"]  / (vol_total  or 1),
+                "pourc_surface":  100 * vals["surface"] / (surf_total or 1),
             }
-            for mat, vals in repart.items()
+            for m, vals in repart.items()
         ]
 
-        # 7) Upload anonymisé (on renomme juste)
-        tmp_out = tempfile.NamedTemporaryFile(suffix=ext, delete=False)
-        with open(tmp.name, "rb") as fsrc, open(tmp_out.name, "wb") as fdst:
-            fdst.write(fsrc.read())
-
+        # 5) “Anonymiser” / renvoyer le même STEP sur Wasabi
+        tmp_out = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        with open(tmp_in.name, "rb") as src, open(tmp_out.name, "wb") as dst:
+            dst.write(src.read())
         key = S3_KEY_PREFIX + os.path.basename(tmp_out.name)
         s3.upload_file(tmp_out.name, S3_BUCKET, key, ExtraArgs={"ACL": "public-read"})
-        url_nettoye = f"{S3_ENDPOINT}/{S3_BUCKET}/{key}"
+        url_clean = f"{S3_ENDPOINT}/{S3_BUCKET}/{key}"
 
-        # 8) JSON de sortie
+        # 6) Réponse finale
         return jsonify({
-            "nombre_de_pieces":      nombre_de_pieces,
-            "volume_total":          volume_total,
-            "surface_total":         surface_total,
-            "repartition_materiaux": repartition,
-            "liste_pieces":          pieces,
-            "url_fichier_nettoye":   url_nettoye,
+            "nombre_de_pieces":       n_pieces,
+            "volume_total":           vol_total,
+            "surface_total":          surf_total,
+            "repartition_materiaux":  repartition,
+            "liste_pieces":           pieces,
+            "url_fichier_nettoye":    url_clean
         })
 
     except Exception as e:
@@ -156,3 +121,4 @@ def analyze():
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     app.run(host="0.0.0.0", port=port)
+
