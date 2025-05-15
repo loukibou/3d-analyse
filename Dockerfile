@@ -1,15 +1,14 @@
 # --- Dockerfile ---
-# 1) Image de base Miniconda
 FROM continuumio/miniconda3:latest
 
-# 2) Installer les libs système pour OpenCASCADE/CadQuery
+# 1) libs système pour OpenCASCADE
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       libgl1-mesa-glx \
       libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# 3) Configurer conda-forge, passer en Python 3.10 et installer tout en une passe
+# 2) config conda-forge + installation globale
 RUN conda config --add channels conda-forge && \
     conda config --set channel_priority strict && \
     conda install -y \
@@ -18,18 +17,21 @@ RUN conda config --add channels conda-forge && \
       pythonocc-core \
       flask \
       requests \
-      boto3 && \
+      boto3 \
+      gunicorn && \
     conda clean -afy
 
-# 4) Copier et installer les éventuelles dépendances pip
+# 3) code et pip (si vous avez d’autres deps)
 WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 5) Copier le code de l’application
+# 4) copier tout le code
 COPY . .
 
-# 6) Exposer et lancer
+# 5) exposer le port Railway injecte
 ENV PORT=8000
 EXPOSE 8000
-CMD ["python", "app.py"]
+
+# 6) lancer avec gunicorn (2 workers, timeout 60s)
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "60", "app:app"]
