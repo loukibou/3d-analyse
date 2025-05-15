@@ -1,39 +1,34 @@
-# 1) Image de base
-FROM ubuntu:22.04
-ENV DEBIAN_FRONTEND=noninteractive
+# --- Dockerfile ---
+# 1) On part d'une image Miniconda (Debian)
+FROM continuumio/miniconda3:latest
 
-# 2) Installer les utilitaires nécessaires (gpg, dirmngr, add-apt-repository…)
+# 2) Installer les libs système dont CadQuery a besoin
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      software-properties-common \
-      ca-certificates \
-      wget \
-      gnupg \
-      dirmngr \
-      lsb-release \
+      libgl1-mesa-glx \
+      libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# 3) Activer le dépôt 'universe' et ajouter le PPA FreeCAD stable
-RUN add-apt-repository universe && \
-    add-apt-repository ppa:freecad-maintainers/freecad-stable && \
-    apt-get update
+# 3) Configurer conda-forge et installer CadQuery + pythonOCC + Flask + Requests + Boto3
+RUN conda config --add channels conda-forge && \
+    conda config --set channel_priority strict && \
+    conda install -y \
+      cadquery \
+      pythonocc-core \
+      flask \
+      requests \
+      boto3 && \
+    conda clean -afy
 
-# 4) Installer FreeCAD, son binding Python, et pip
-RUN apt-get install -y --no-install-recommends \
-      freecad \
-      python3-freecad \
-      python3-pip \
-    && rm -rf /var/lib/apt/lists/*
-
-# 5) Installer les dépendances Python de l’app
+# 4) Copier le code et installer les éventuelles dépendances Pip restantes
 WORKDIR /app
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 6) Copier le reste du code et exposer le port
+# 5) Copier le reste de l'application
 COPY . .
+
+# 6) Exposer le port et lancer
 ENV PORT=8000
 EXPOSE 8000
-
-# 7) Commande de démarrage
-CMD ["python3", "app.py"]
+CMD ["python", "app.py"]
