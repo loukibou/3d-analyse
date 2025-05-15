@@ -1,24 +1,32 @@
-# 1) On part d'une image Ubuntu récente
 FROM ubuntu:22.04
 
-# 2) Installer FreeCAD headless + Python3 + pip + dépendances système
+# 1) Activer universe + installer pré‑requis pour PPA
 RUN apt-get update && \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y \
-      python3-freecad \
+    apt-get install -y --no-install-recommends \
+      software-properties-common \
+      ca-certificates \
+      wget && \
+    add-apt-repository universe && \
+    add-apt-repository ppa:freecad-maintainers/freecad-stable && \
+    apt-get update
+
+# 2) Installer FreeCAD & Python
+RUN DEBIAN_FRONTEND=noninteractive \
+    apt-get install -y --no-install-recommends \
       freecad \
-      python3-pip \
-      && rm -rf /var/lib/apt/lists/*
+      python3-freecad \
+      python3-pip && \
+    rm -rf /var/lib/apt/lists/*
 
-# 3) Installer Flask, requests et boto3
-RUN pip3 install --no-cache-dir flask requests boto3
+# 3) Installer les dépendances Python  
+WORKDIR /app  
+COPY requirements.txt .  
+RUN pip3 install --no-cache-dir -r requirements.txt
 
-# 4) Copier l'app
-WORKDIR /app
-COPY app.py .
+# 4) Copier le code  
+COPY . .
 
-# 5) Exposer le port injecté par Railway
-ENV PORT=8000
-EXPOSE 8000
-
-# 6) Démarrer le service
+# 5) Exposer le port et démarrer  
+ENV PORT=8000  
+EXPOSE 8000  
 CMD ["python3", "app.py"]
