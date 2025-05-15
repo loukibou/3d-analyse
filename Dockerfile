@@ -1,30 +1,34 @@
-# 1) On part de Miniconda
+# 1) Image Miniconda (Debian sous-jacent pour apt-get)
 FROM continuumio/miniconda3
 
-# 2) On configure conda‑forge et on installe mamba
-RUN conda config --add channels conda-forge \
- && conda config --set channel_priority strict \
- && conda install -y mamba \
- && conda clean -afy
+# 2) Installer les libs système requises pour OpenCASCADE/CadQuery
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+      libgl1-mesa-glx \
+      libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-# 3) On améliore la base Python en la passant en 3.10,
-#    puis on installe CadQuery, pythonOCC et vos libs
+# 3) Configurer conda-forge et installer mamba (solveur rapide)
+RUN conda config --add channels conda-forge && \
+    conda config --set channel_priority strict && \
+    conda install -y mamba && \
+    conda clean -afy
+
+# 4) Installer Python 3.10, CadQuery, pythonOCC et vos dépendances
 RUN mamba install -y \
-     python=3.10 \
-     cadquery \
-     pythonocc-core \
-     flask \
-     requests \
-     boto3 \
- && mamba clean --all --yes
+      python=3.10 \
+      cadquery \
+      pythonocc-core \
+      flask \
+      requests \
+      boto3 \
+    && mamba clean --all --yes
 
-# 4) On copie le code de l’application
+# 5) Copier le code de l’app
 WORKDIR /app
 COPY . .
 
-# 5) On expose le port injecté par Railway
+# 6) Exposer le port injecté par Railway et lancer l’app
 ENV PORT=8000
 EXPOSE 8000
-
-# 6) On lance l’application
 CMD ["python", "app.py"]
