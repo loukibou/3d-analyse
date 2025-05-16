@@ -1,4 +1,2 @@
-flask
-requests
-boto3
-cadquery==2.5.2
+# (laisser vide — ou ne pas l’inclure du tout)
+
