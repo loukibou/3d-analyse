@@ -1,2 +1,8 @@
-# (laisser vide — ou ne pas l’inclure du tout)
+# --- requirements.txt ---
+
+flask
+requests
+boto3
+pythonocc-core
+
 
