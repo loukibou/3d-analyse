@@ -2,8 +2,9 @@ from flask import Flask, request, jsonify
 import tempfile, os, requests, boto3, traceback
 
 # FreeCAD headless
-import FreeCAD
-import ImportGui  # permet d'importer le STEP en mémoire
+import FreeCAD, FreeCADGui            # <-- FreeCADGui requis même en headless
+FreeCADGui.showMainWindow(False)      # n’ouvre rien mais initialise les modules
+import ImportGui
 
 app = Flask(__name__)
 
