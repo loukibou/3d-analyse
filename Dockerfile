@@ -1,21 +1,29 @@
-FROM python:3.10-slim
+# 1) Image de base Miniconda
+FROM continuumio/miniconda3:latest
 
-# libs système pour OCCT (CadQuery/OCP)
+# 2) Libs système requises par OpenCASCADE (FreeCAD)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
       libgl1-mesa-glx \
       libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+# 3) Configurer conda-forge et installer tout
+RUN conda config --add channels conda-forge && \
+    conda config --set channel_priority strict && \
+    conda install -y \
+      freecad            \
+      pythonocc-core     \
+      flask              \
+      requests           \
+      boto3              \
+    && conda clean -afy
+
+# 4) Créer le répertoire de travail et copier l'app
 WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
 COPY . .
 
+# 5) Exposer le port et démarrer
 ENV PORT=8000
 EXPOSE 8000
-
-# pour prod, tu peux remplacer par gunicorn
 CMD ["python", "app.py"]
