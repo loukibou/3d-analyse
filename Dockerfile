@@ -1,8 +1,7 @@
 # ---------- Dockerfile ----------
-# Image conda officielle et publique
-FROM condaforge/miniforge3:23.11.0-2
+FROM condaforge/miniforge3:latest      # ← tag présent pour amd64
 
-# 1) Installer toutes les dépendances en une seule transaction
+# 1) Dépendances CAD + web API
 RUN conda install -y -c conda-forge \
         python=3.10 \
         freecad \
@@ -13,11 +12,14 @@ RUN conda install -y -c conda-forge \
         boto3 \
     && conda clean -afy
 
-# 2) Copier le code
+# 2) Variable Qt pour le mode headless
+ENV QT_QPA_PLATFORM=offscreen
+
+# 3) Code
 WORKDIR /app
 COPY app.py .
 
-# 3) Démarrer l’API
+# 4) Démarrage
 ENV PORT=8000
 EXPOSE 8000
 CMD ["python", "app.py"]
