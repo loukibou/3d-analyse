@@ -1,4 +1,4 @@
-# requirements.txt
-# (optionnel — conda installera déjà flask, requests et boto3,
-#  mais on le garde pour tout autre package pip)
-
+flask
+requests
+boto3
+cadquery==2.5.2
