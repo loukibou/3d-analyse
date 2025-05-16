@@ -1,7 +1,8 @@
 # ---------- Dockerfile ----------
-FROM condaforge/miniforge3:latest      # ← tag présent pour amd64
+# (1) Image de base Miniforge / conda-forge (amd64)
+FROM conda-forge/miniforge3:latest    # ← orthographe correcte
 
-# 1) Dépendances CAD + web API
+# (2) Librairies CAO + dépendances API
 RUN conda install -y -c conda-forge \
         python=3.10 \
         freecad \
@@ -12,14 +13,14 @@ RUN conda install -y -c conda-forge \
         boto3 \
     && conda clean -afy
 
-# 2) Variable Qt pour le mode headless
+# FreeCAD en mode headless
 ENV QT_QPA_PLATFORM=offscreen
 
-# 3) Code
+# (3) Copie du code
 WORKDIR /app
 COPY app.py .
 
-# 4) Démarrage
+# (4) Exposition & démarrage
 ENV PORT=8000
 EXPOSE 8000
 CMD ["python", "app.py"]
