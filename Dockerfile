@@ -1,34 +1,28 @@
-# 1) Image de base Miniconda
-FROM continuumio/miniconda3:latest
+# --- Dockerfile ---
 
-# 2) Dépendances système pour l’affichage OpenCASCADE/FreeCAD
+# 1) Base Ubuntu avec Python3
+FROM ubuntu:22.04
+
+# 2) Installer Python, pip, FreeCAD et dépendances OpenCASCADE
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+      python3 \
+      python3-pip \
+      freecad \
+      python3-freecad \
       libgl1-mesa-glx \
       libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-# 3) Configurer conda-forge et installer mamba (solveur plus rapide)
-RUN conda config --add channels conda-forge && \
-    conda config --set channel_priority strict && \
-    conda install -y mamba && \
-    conda clean -afy
-
-# 4) Installer Python 3.10 + FreeCAD + pythonocc-core + Flask/requests/boto3
-RUN mamba install -y \
-      python=3.10 \
-      freecad \
-      pythonocc-core \
-      flask \
-      requests \
-      boto3 && \
-    mamba clean --all --yes
-
-# 5) Copier l’application
+# 3) Copier les sources et installer les dépendances Python
 WORKDIR /app
+COPY requirements.txt .
+RUN pip3 install --no-cache-dir -r requirements.txt
+
+# 4) Copier le code de l’API
 COPY . .
 
-# 6) Exposer le port et démarrer
+# 5) Exposer le port et démarrer l’application
 ENV PORT=8000
 EXPOSE 8000
-CMD ["python", "app.py"]
+CMD ["python3", "app.py"]
