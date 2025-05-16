@@ -1,8 +1,8 @@
-# --- requirements.txt ---
-
 flask
 requests
 boto3
 pythonocc-core
+cadquery
+gunicorn
 
 
