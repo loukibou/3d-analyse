@@ -1,26 +1,24 @@
 # ---------- Dockerfile ----------
-# (1) Image de base Miniforge / conda-forge (amd64)
-FROM conda-forge/miniforge3:latest    # ← orthographe correcte
 
-# (2) Librairies CAO + dépendances API
-RUN conda install -y -c conda-forge \
-        python=3.10 \
-        freecad \
-        pythonocc-core=7.6.* \
-        cadquery \
-        flask \
-        requests \
-        boto3 \
-    && conda clean -afy
+# 1) Base Python 3.10 slim
+FROM python:3.10-slim
 
-# FreeCAD en mode headless
-ENV QT_QPA_PLATFORM=offscreen
+# 2) Dépendance système pour OpenCASCADE (libGL)
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libgl1-mesa-glx libglib2.0-0 && \
+    rm -rf /var/lib/apt/lists/*
 
-# (3) Copie du code
+# 3) Copier et installer les dépendances Python
 WORKDIR /app
-COPY app.py .
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# (4) Exposition & démarrage
+# 4) Copier le code de l’API
+COPY . .
+
+# 5) Exposer le port (Railway injecte $PORT)
 ENV PORT=8000
 EXPOSE 8000
-CMD ["python", "app.py"]
+
+# 6) Lancer via Gunicorn (2 workers, timeout 60s)
+CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--timeout", "60", "app:app"]
