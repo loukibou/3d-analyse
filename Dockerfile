@@ -1,9 +1,9 @@
 # ---------- Dockerfile ----------
-# Image de base : mamba + Python 3.10
-FROM mambaforge/mambaforge:23.3.1-4
+# Image conda officielle et publique
+FROM condaforge/miniforge3:23.11.0-2
 
-# 1) Installer FreeCAD, pythonocc-core, CadQuery et vos libs web
-RUN mamba install -y -c conda-forge \
+# 1) Installer toutes les dépendances en une seule transaction
+RUN conda install -y -c conda-forge \
         python=3.10 \
         freecad \
         pythonocc-core=7.6.* \
@@ -11,14 +11,13 @@ RUN mamba install -y -c conda-forge \
         flask \
         requests \
         boto3 \
-    && mamba clean -afy
+    && conda clean -afy
 
-# 2) Copier le code de l’API
+# 2) Copier le code
 WORKDIR /app
 COPY app.py .
 
-# 3) Lancer le service Flask
+# 3) Démarrer l’API
 ENV PORT=8000
 EXPOSE 8000
 CMD ["python", "app.py"]
-
